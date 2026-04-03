@@ -177,7 +177,7 @@ claude -p "プロンプト内容" --output-format json
 |------------|---------|------|--------------|-------------------------------|
 | categoryId | String  | No   | -            | カテゴリIDでフィルタ            |
 | read       | Boolean | No   | -            | true=既読のみ, false=未読のみ   |
-| sortBy     | String  | No   | "importance" | "importance"（降順）or "publishedAt"（降順） |
+| sortBy     | String  | No   | "importance" | "importance", "publishedAt", or "collectedAt"（いずれも降順） |
 | limit      | Int     | No   | 50           | 取得件数                       |
 | offset     | Int     | No   | 0            | スキップ件数                    |
 
