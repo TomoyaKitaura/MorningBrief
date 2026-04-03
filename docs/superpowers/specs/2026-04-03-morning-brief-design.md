@@ -1,182 +1,267 @@
-# MorningBrief Design Spec
+# MorningBrief 設計仕様書
 
-## Overview
+## 概要
 
-A personal morning dashboard web app for catching up on tech news. Aggregates information from X (Twitter) accounts and official release feeds (RSS), summarizes articles using Claude API, and presents them sorted by importance.
+技術情報キャッチアップのための個人用モーニングダッシュボード。公式ブログやリリースノートのRSSフィードから情報を収集し、Claude APIで要約・重要度スコアリングを行い、見やすいWeb UIで表示する。
 
-Runs locally as a single Next.js process with SQLite for storage.
+ローカル環境でNext.js単一プロセス + SQLiteで動作する。
 
-## Requirements
+## 要件
 
-- **Tech info catch-up**: Aggregate updates from X accounts and official sources (AWS, Claude Code, etc.)
-- **Flexible categories**: Easy to add/remove categories and sources via a settings UI
-- **AI summaries**: Each article gets a 1-2 sentence Japanese summary and importance score (1-5) via Claude API (Sonnet 4.6)
-- **Scheduled collection**: cron job runs daily at 7:00 AM, hitting a local API route
-- **Local deployment**: Runs on the user's machine, no cloud hosting
-- **Human-readable**: Clean web UI with category filtering and importance sorting
+- **技術情報キャッチアップ**: AWS、Claude Codeなどの公式情報をRSSフィードから収集
+- **柔軟なカテゴリ管理**: 設定画面からカテゴリとソースを簡単に追加・削除
+- **AI要約**: 各記事に日本語の要約（1-2文）と重要度スコア（1-5）を付与（Claude Sonnet 4.6）
+- **定時収集**: 毎朝7:00にcronでAPI Routeを叩いて自動収集
+- **ローカル運用**: 自分のマシンで動作、クラウドホスティング不要
+- **見やすいUI**: カテゴリフィルタ・重要度ソート付きのWebダッシュボード
 
-## Architecture
+## アーキテクチャ
 
 ```
-Next.js App (single process)
-├── React UI (App Router)
-├── API Routes (collect, articles, categories, sources)
-├── SQLite via Prisma
-└── Collection pipeline (X API, RSS)
-    └── Claude API for summarization
+Next.js App（単一プロセス）
+├── React UI（App Router）
+├── API Routes（収集、記事、カテゴリ、ソース）
+├── SQLite（Prisma経由）
+└── 収集パイプライン（RSSフィード取得）
+    └── Claude APIで要約生成
 ```
 
-OS cron calls `POST /api/collect` at 7:00 AM daily. The collection pipeline fetches new posts/articles, deduplicates by externalId, and sends them to Claude API for summarization and importance scoring.
+OS cronが毎朝7:00に `POST /api/collect` を呼び出す。収集パイプラインがRSSフィードから新着記事を取得し、externalIdで重複チェック後、Claude APIに送って要約と重要度スコアを生成する。
 
-## Data Model
+## データモデル
 
-### Category
+### Category（カテゴリ）
 
-| Field     | Type     | Description                        |
-|-----------|----------|------------------------------------|
-| id        | String   | UUID                               |
-| name      | String   | Display name ("AWS", "Claude Code") |
-| slug      | String   | URL-safe identifier                |
-| createdAt | DateTime |                                    |
-| updatedAt | DateTime |                                    |
+| フィールド | 型       | 説明                            |
+|-----------|----------|---------------------------------|
+| id        | String   | UUID                            |
+| name      | String   | 表示名（"AWS", "Claude Code"等） |
+| slug      | String   | URL用識別子                      |
+| createdAt | DateTime | 作成日時                         |
+| updatedAt | DateTime | 更新日時                         |
 
-### Source
+### Source（情報ソース）
 
-| Field      | Type     | Description                              |
-|------------|----------|------------------------------------------|
-| id         | String   | UUID                                     |
-| categoryId | String   | FK to Category                           |
-| type       | Enum     | TWITTER, RSS, RELEASE_PAGE               |
-| name       | String   | Display name ("@awscloud", "Anthropic Blog") |
-| url        | String   | X user ID, RSS feed URL, etc.            |
-| enabled    | Boolean  | Toggle source on/off                     |
-| createdAt  | DateTime |                                          |
-| updatedAt  | DateTime |                                          |
+| フィールド  | 型       | 説明                                    |
+|------------|----------|-----------------------------------------|
+| id         | String   | UUID                                    |
+| categoryId | String   | Category外部キー                         |
+| name       | String   | 表示名（"AWS公式ブログ", "Anthropicブログ"等） |
+| url        | String   | RSSフィードURL                           |
+| enabled    | Boolean  | 有効/無効フラグ                           |
+| createdAt  | DateTime | 作成日時                                 |
+| updatedAt  | DateTime | 更新日時                                 |
 
-### Article
+### Article（記事）
 
-| Field       | Type      | Description                          |
-|-------------|-----------|--------------------------------------|
-| id          | String    | UUID                                 |
-| sourceId    | String    | FK to Source                         |
-| externalId  | String    | Deduplication key (tweet ID, URL)    |
-| title       | String?   | Article title (nullable for tweets)  |
-| content     | String    | Original text                        |
-| url         | String    | Link to original                     |
-| summary     | String?   | AI-generated Japanese summary        |
-| importance  | Int       | 1-5, AI-assigned importance score    |
-| publishedAt | DateTime  | Original publish time                |
-| collectedAt | DateTime  | When we fetched it                   |
-| readAt      | DateTime? | Null = unread                        |
+| フィールド   | 型         | 説明                              |
+|-------------|------------|-----------------------------------|
+| id          | String     | UUID                              |
+| sourceId    | String     | Source外部キー                     |
+| externalId  | String     | 重複防止キー（記事URL）             |
+| title       | String?    | 記事タイトル                       |
+| content     | String     | 元のテキスト                       |
+| url         | String     | 元記事へのリンク                    |
+| summary     | String?    | AI生成の日本語要約                  |
+| importance  | Int        | 1-5のAI判定重要度（デフォルト: 0）   |
+| publishedAt | DateTime   | 元記事の公開日時                    |
+| collectedAt | DateTime   | 収集日時                           |
+| readAt      | DateTime?  | 既読日時（null=未読）               |
 
-### Relationships
+### リレーション
 
-- Category 1:N Source
-- Source 1:N Article
+- Category 1:N Source（1カテゴリに複数ソース）
+- Source 1:N Article（1ソースに複数記事）
 
-## Collection Pipeline
+## 収集パイプライン
 
-### Flow
+### フロー
 
-1. `POST /api/collect` triggered by cron
-2. Fetch all enabled Sources from DB
-3. For each source type:
-   - **TWITTER**: X API v2 — fetch latest tweets from user timeline
-   - **RSS**: `rss-parser` — fetch and parse feed items
-   - **RELEASE_PAGE**: Treated as RSS (most official release pages provide RSS)
-4. Deduplicate by `externalId`, save only new articles
-5. Batch new articles by category, send to Claude API (Sonnet 4.6)
-6. Claude generates Japanese summary (1-2 sentences) and importance score (1-5) per article
-7. Save summaries and scores to DB
+1. `POST /api/collect` がcronから呼ばれる
+2. DBから有効な（`enabled=true`）Source一覧を取得
+3. 各ソースのRSSフィードを `rss-parser` で取得
+4. `externalId`（記事URL）で重複チェック、新規のみDB保存
+5. 新規記事をカテゴリごとにバッチ化してClaude APIに送信
+6. Claude APIが各記事の日本語要約と重要度スコアを返す
+7. 要約とスコアをDBに保存
 
-### X API Free Plan Constraints
+### エラーハンドリング
 
-- Monthly limit: 1,500 post reads
-- Strategy: 10-15 accounts, 3-5 tweets each per collection run
-- ~50 posts/day, ~1,500/month
-- Sources can be disabled via `enabled` flag to stay within budget
+- **ソース単位で独立処理**: 1つのソースが失敗しても他のソースの収集は継続
+- **RSSフィード取得失敗**: エラーログ出力してスキップ、次回収集時に再取得
+- **Claude API失敗**: 記事は `importance: 0`, `summary: null` で保存し、次回収集時に未要約記事を再処理
+- **部分的な結果もコミット**: 全体がアトミックでなくてよい
 
-### Claude API Usage
+### Claude API利用
 
-- Model: `claude-sonnet-4-6`
-- Batch by category to reduce API calls
-- Prompt: Summarize each article in Japanese (1-2 sentences), assign importance 1-5 for a tech professional
+- **モデル**: `claude-sonnet-4-6`
+- **バッチサイズ**: カテゴリごとに最大10記事ずつ
+- **記事コンテンツ**: 1記事あたり最大2,000文字に切り詰め
+- **プロンプトテンプレート**:
 
-### Example Sources
+```
+あなたは技術情報アナリストです。以下の技術記事を分析してください。
 
-| Category    | Type    | Source                         |
-|-------------|---------|--------------------------------|
-| AWS         | TWITTER | @awscloud                      |
-| AWS         | RSS     | aws.amazon.com/blogs RSS       |
-| Claude Code | TWITTER | @AnthropicAI                   |
-| Claude Code | RSS     | Anthropic official blog RSS    |
+各記事について以下を返してください：
+1. 日本語での要約（1-2文、技術者向け）
+2. 重要度スコア（1-5）
 
-## API Routes
+重要度の基準：
+- 5: 破壊的変更、重大なセキュリティ更新、主要な新機能リリース
+- 4: 重要な機能追加、パフォーマンス改善、非推奨化の通知
+- 3: 一般的な機能更新、ツールの改善
+- 2: マイナーな修正、ドキュメント更新
+- 1: コミュニティ記事、イベント告知
 
-| Method | Path                       | Purpose                              |
-|--------|----------------------------|--------------------------------------|
-| POST   | `/api/collect`             | Run collection pipeline              |
-| GET    | `/api/articles`            | List articles (category/read filter) |
-| PATCH  | `/api/articles/[id]/read`  | Mark as read                         |
-| GET    | `/api/categories`          | List categories                      |
-| POST   | `/api/categories`          | Create category                      |
-| DELETE | `/api/categories/[id]`     | Delete category + sources + articles |
-| GET    | `/api/sources`             | List sources                         |
-| POST   | `/api/sources`             | Create source                        |
-| PATCH  | `/api/sources/[id]`        | Update source (enable/disable, etc.) |
-| DELETE | `/api/sources/[id]`        | Delete source                        |
+以下のJSON形式で返してください：
+[
+  {
+    "externalId": "記事の識別子",
+    "summary": "日本語の要約",
+    "importance": 数値
+  }
+]
+```
 
-## Frontend
+- **レスポンス形式**: 上記JSON配列
 
-### Pages
+### 情報ソースの例
 
-**Dashboard (`/`)**
-- Category tabs for filtering (All, AWS, Claude Code, etc.)
-- Articles sorted by importance (default), then by publishedAt
-- Each article card shows: importance stars, title/summary, source name, time, link to original
-- Unread articles in bold, click to mark as read
+| カテゴリ     | ソース名            | RSSフィードURL                        |
+|-------------|--------------------|-----------------------------------------|
+| AWS         | AWS公式ブログ       | aws.amazon.com/blogs のRSSフィード       |
+| AWS         | AWS What's New      | aws.amazon.com/about-aws/whats-new RSS  |
+| Claude Code | Anthropicブログ     | anthropic.com/blog のRSSフィード         |
 
-**Settings (`/settings`)**
-- Category CRUD (add, edit, delete)
-- Source CRUD per category (add X account, RSS URL; toggle enabled)
+## APIルート
 
-### UI Stack
+### エンドポイント一覧
 
-- Tailwind CSS for styling
-- No component library — keep it lightweight
+| メソッド | パス                         | 用途                     |
+|---------|------------------------------|--------------------------|
+| POST    | `/api/collect`               | 収集パイプライン実行       |
+| GET     | `/api/articles`              | 記事一覧取得              |
+| PATCH   | `/api/articles/[id]/read`    | 既読マーク                |
+| GET     | `/api/categories`            | カテゴリ一覧              |
+| POST    | `/api/categories`            | カテゴリ追加              |
+| PATCH   | `/api/categories/[id]`       | カテゴリ編集              |
+| DELETE  | `/api/categories/[id]`       | カテゴリ削除（配下も削除） |
+| GET     | `/api/sources`               | ソース一覧                |
+| POST    | `/api/sources`               | ソース追加                |
+| PATCH   | `/api/sources/[id]`          | ソース更新                |
+| DELETE  | `/api/sources/[id]`          | ソース削除                |
 
-## Directory Structure
+### `GET /api/articles` クエリパラメータ
+
+| パラメータ  | 型      | 必須 | デフォルト    | 説明                          |
+|------------|---------|------|--------------|-------------------------------|
+| categoryId | String  | No   | -            | カテゴリIDでフィルタ            |
+| read       | Boolean | No   | -            | true=既読のみ, false=未読のみ   |
+| sortBy     | String  | No   | "importance" | "importance" or "publishedAt" |
+| limit      | Int     | No   | 50           | 取得件数                       |
+| offset     | Int     | No   | 0            | スキップ件数                    |
+
+### `GET /api/articles` レスポンス
+
+```json
+{
+  "articles": [
+    {
+      "id": "uuid",
+      "title": "記事タイトル",
+      "content": "元テキスト",
+      "url": "https://...",
+      "summary": "AI要約",
+      "importance": 5,
+      "publishedAt": "2026-04-03T00:00:00Z",
+      "readAt": null,
+      "source": {
+        "id": "uuid",
+        "name": "AWS公式ブログ"
+      },
+      "category": {
+        "id": "uuid",
+        "name": "AWS",
+        "slug": "aws"
+      }
+    }
+  ],
+  "total": 100
+}
+```
+
+## フロントエンド
+
+### 画面構成
+
+**ダッシュボード (`/`)**
+
+```
+┌─────────────────────────────────────────┐
+│  MorningBrief          最終更新: 7:00   │
+├─────────────────────────────────────────┤
+│  [全て] [AWS] [Claude Code] [+追加]     │  ← カテゴリタブ
+├─────────────────────────────────────────┤
+│  ★★★★★ AWSがLambdaの新機能を発表       │
+│  要約: Lambda関数のコールドスタートが...   │
+│  AWS公式ブログ · 2時間前     [元記事→]   │
+├─────────────────────────────────────────┤
+│  ★★★★☆ Claude Code v2.1 リリース        │
+│  要約: 新しいMCPサーバー統合が...         │
+│  Anthropicブログ · 5時間前   [元記事→]   │
+├─────────────────────────────────────────┤
+│  ...                                    │
+└─────────────────────────────────────────┘
+```
+
+- カテゴリタブでフィルタ
+- 重要度順にソート（デフォルト）
+- 未読記事は太字表示
+- 記事カードをクリックすると既読マークし、元記事を新しいタブで開く
+- ページネーション対応（50件ずつ）
+
+**設定画面 (`/settings`)**
+
+- カテゴリのCRUD（追加・編集・削除）
+- ソースのCRUD（カテゴリごとにRSSフィードURLを管理）
+- ソースごとの有効/無効切り替え
+
+### UIスタック
+
+- **Tailwind CSS** でスタイリング
+- コンポーネントライブラリは使わず軽量に保つ
+
+## ディレクトリ構成
 
 ```
 MorningBrief/
 ├── src/
 │   ├── app/
-│   │   ├── page.tsx                # Dashboard
+│   │   ├── page.tsx                # ダッシュボード
 │   │   ├── settings/
-│   │   │   └── page.tsx            # Settings
+│   │   │   └── page.tsx            # 設定画面
 │   │   ├── api/
-│   │   │   ├── collect/route.ts
+│   │   │   ├── collect/route.ts    # 収集パイプライン
 │   │   │   ├── articles/
-│   │   │   │   ├── route.ts
-│   │   │   │   └── [id]/read/route.ts
+│   │   │   │   ├── route.ts        # 記事一覧
+│   │   │   │   └── [id]/
+│   │   │   │       └── read/route.ts  # 既読マーク
 │   │   │   ├── categories/
-│   │   │   │   ├── route.ts
-│   │   │   │   └── [id]/route.ts
+│   │   │   │   ├── route.ts        # カテゴリ一覧・追加
+│   │   │   │   └── [id]/route.ts   # カテゴリ編集・削除
 │   │   │   └── sources/
-│   │   │       ├── route.ts
-│   │   │       └── [id]/route.ts
+│   │   │       ├── route.ts        # ソース一覧・追加
+│   │   │       └── [id]/route.ts   # ソース更新・削除
 │   │   └── layout.tsx
 │   ├── components/
-│   │   ├── ArticleCard.tsx
-│   │   ├── CategoryTabs.tsx
-│   │   ├── CategoryForm.tsx
-│   │   └── SourceForm.tsx
+│   │   ├── ArticleCard.tsx         # 記事カード
+│   │   ├── CategoryTabs.tsx        # カテゴリタブ
+│   │   ├── CategoryForm.tsx        # カテゴリ追加・編集フォーム
+│   │   └── SourceForm.tsx          # ソース追加・編集フォーム
 │   ├── lib/
-│   │   ├── db.ts                   # Prisma client
-│   │   ├── collectors/
-│   │   │   ├── twitter.ts          # X API fetcher
-│   │   │   └── rss.ts              # RSS fetcher
-│   │   └── summarizer.ts           # Claude API summarization
+│   │   ├── db.ts                   # Prismaクライアント
+│   │   ├── collector.ts            # RSS収集ロジック
+│   │   └── summarizer.ts           # Claude API要約ロジック
 │   └── types/
 │       └── index.ts
 ├── prisma/
@@ -186,28 +271,57 @@ MorningBrief/
 └── next.config.ts
 ```
 
-## Key Libraries
+## 主要ライブラリ
 
-| Library              | Purpose             |
+| ライブラリ            | 用途                |
 |----------------------|---------------------|
-| `next`               | Framework           |
+| `next`               | フレームワーク       |
 | `prisma` + `@prisma/client` | ORM + SQLite |
 | `@anthropic-ai/sdk`  | Claude API          |
-| `twitter-api-v2`     | X API               |
-| `rss-parser`         | RSS feed parsing    |
-| `tailwindcss`        | Styling             |
+| `rss-parser`         | RSSフィード取得      |
+| `tailwindcss`        | スタイリング         |
 
-## Cron Setup
+## 運用
+
+### cron設定
 
 ```bash
 # crontab -e
 0 7 * * * curl -X POST http://localhost:3000/api/collect
 ```
 
-## Environment Variables
+### プロセス管理
+
+Next.jsをビルドして `next start` で起動。macOSの場合は `launchd` を使って常時起動を推奨：
+
+```xml
+<!-- ~/Library/LaunchAgents/com.morningbrief.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.morningbrief</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>npx</string>
+        <string>next</string>
+        <string>start</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/MorningBrief</string>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+```
+
+### データ保持
+
+- 90日以上前の記事は自動削除（収集時にクリーンアップ）
+- SQLiteファイルはプロジェクトルートの `prisma/dev.db`
+
+### 環境変数
 
 ```
-TWITTER_BEARER_TOKEN=<X API bearer token>
-ANTHROPIC_API_KEY=<Claude API key>
+ANTHROPIC_API_KEY=<Claude APIキー>
 DATABASE_URL="file:./dev.db"
 ```
