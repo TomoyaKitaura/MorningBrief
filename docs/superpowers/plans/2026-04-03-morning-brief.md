@@ -4,9 +4,9 @@
 
 **Goal:** Build a local morning dashboard that aggregates tech news from RSS feeds, summarizes with Claude Code CLI, and presents in a clean web UI.
 
-**Architecture:** Next.js App Router monolith with SQLite (Prisma). RSS collection triggered by OS cron via API Route. Claude Code CLI (`claude -p`) for AI summarization using Max subscription auth. Tailwind CSS for styling.
+**Architecture:** Next.js App Router monolith with SQLite (Drizzle ORM). RSS collection triggered by OS cron via API Route. Claude Code CLI (`claude -p`) for AI summarization using Max subscription auth. Tailwind CSS for styling.
 
-**Tech Stack:** Next.js 15, React 19, Prisma + SQLite, Claude Code CLI, rss-parser, Tailwind CSS, TypeScript
+**Tech Stack:** Next.js 15, React 19, Drizzle ORM + better-sqlite3, Claude Code CLI, rss-parser, Tailwind CSS, TypeScript
 
 **Spec:** `docs/superpowers/specs/2026-04-03-morning-brief-design.md`
 
@@ -16,9 +16,6 @@
 
 ```
 MorningBrief/
-├── prisma/
-│   ├── schema.prisma              # DB schema (Category, Source, Article)
-│   └── seed.ts                    # Seed data
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx             # Root layout with Tailwind
@@ -44,11 +41,16 @@ MorningBrief/
 │   │   ├── CategoryForm.tsx       # Category add/edit form
 │   │   └── SourceForm.tsx         # Source add/edit form
 │   ├── lib/
-│   │   ├── db.ts                  # Prisma client singleton
+│   │   ├── schema.ts              # Drizzle schema definition
+│   │   ├── db.ts                  # Drizzle client
+│   │   ├── seed.ts                # Seed data
 │   │   ├── collector.ts           # RSS feed fetcher
 │   │   └── summarizer.ts          # Claude Code CLI wrapper
 │   └── types/
 │       └── index.ts               # Shared TypeScript types
+├── drizzle/                       # Migration files (auto-generated)
+├── drizzle.config.ts              # Drizzle Kit configuration
+├── data/                          # SQLite database file
 ├── __tests__/
 │   ├── lib/
 │   │   ├── collector.test.ts      # RSS collector tests
@@ -58,7 +60,6 @@ MorningBrief/
 │       ├── categories.test.ts     # Categories API tests
 │       ├── sources.test.ts        # Sources API tests
 │       └── collect.test.ts        # Collection pipeline tests
-├── .env                           # DATABASE_URL
 ├── jest.config.ts                 # Jest configuration
 ├── package.json
 ├── tsconfig.json
@@ -69,13 +70,13 @@ MorningBrief/
 
 ---
 
-## Task 1: Project Setup, Prisma Schema & Jest Configuration
+## Task 1: Project Setup, Drizzle Schema & Jest Configuration
 
 **Files:**
 - Create: `package.json`, `tsconfig.json`, `next.config.ts`, `tailwind.config.ts`, `postcss.config.mjs`
-- Create: `prisma/schema.prisma`, `.env`
+- Create: `src/lib/schema.ts`, `src/lib/db.ts`
+- Create: `drizzle.config.ts`
 - Create: `src/app/layout.tsx`, `src/app/page.tsx` (placeholder)
-- Create: `src/lib/db.ts`
 - Create: `src/types/index.ts`
 - Create: `jest.config.ts`
 
@@ -91,8 +92,8 @@ Note: If prompted about existing files, confirm overwrite. The `docs/` directory
 - [ ] **Step 2: Install dependencies**
 
 ```bash
-npm install prisma @prisma/client rss-parser
-npm install -D @types/node jest ts-jest @testing-library/react @testing-library/jest-dom tsx
+npm install drizzle-orm better-sqlite3 rss-parser
+npm install -D drizzle-kit @types/better-sqlite3 @types/node jest ts-jest @testing-library/react @testing-library/jest-dom tsx
 ```
 
 - [ ] **Step 3: Configure Jest**
@@ -123,83 +124,84 @@ Add test script to `package.json` scripts:
 "test": "jest"
 ```
 
-- [ ] **Step 4: Initialize Prisma with SQLite**
+- [ ] **Step 4: Create Drizzle schema**
 
-```bash
-npx prisma init --datasource-provider sqlite
+Create `src/lib/schema.ts`:
+
+```typescript
+import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+
+export const categories = sqliteTable("categories", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const sources = sqliteTable("sources", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  categoryId: text("category_id").notNull().references(() => categories.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const articles = sqliteTable("articles", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  sourceId: text("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
+  externalId: text("external_id").notNull().unique(),
+  title: text("title"),
+  content: text("content").notNull(),
+  url: text("url").notNull(),
+  summary: text("summary"),
+  importance: integer("importance").notNull().default(0),
+  publishedAt: text("published_at").notNull(),
+  collectedAt: text("collected_at").notNull().default(sql`(datetime('now'))`),
+  readAt: text("read_at"),
+});
 ```
 
-- [ ] **Step 5: Write Prisma schema**
-
-Replace contents of `prisma/schema.prisma`:
-
-```prisma
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
-}
-
-model Category {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  sources   Source[]
-}
-
-model Source {
-  id         String   @id @default(uuid())
-  categoryId String
-  name       String
-  url        String
-  enabled    Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  articles   Article[]
-}
-
-model Article {
-  id          String    @id @default(uuid())
-  sourceId    String
-  externalId  String    @unique
-  title       String?
-  content     String
-  url         String
-  summary     String?
-  importance  Int       @default(0)
-  publishedAt DateTime
-  collectedAt DateTime  @default(now())
-  readAt      DateTime?
-  source      Source    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-}
-```
-
-- [ ] **Step 6: Generate Prisma client and run migration**
-
-```bash
-npx prisma migrate dev --name init
-```
-
-- [ ] **Step 7: Create Prisma client singleton**
+- [ ] **Step 5: Create Drizzle client**
 
 Create `src/lib/db.ts`:
 
 ```typescript
-import { PrismaClient } from "@prisma/client";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import * as schema from "./schema";
+import path from "path";
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
+const dbPath = path.join(process.cwd(), "data", "morningbrief.db");
+const sqlite = new Database(dbPath);
+sqlite.pragma("journal_mode = WAL");
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+export const db = drizzle(sqlite, { schema });
+```
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+- [ ] **Step 6: Create Drizzle Kit configuration**
+
+Create `drizzle.config.ts`:
+
+```typescript
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/lib/schema.ts",
+  out: "./drizzle",
+  dialect: "sqlite",
+  dbCredentials: { url: "./data/morningbrief.db" },
+});
+```
+
+- [ ] **Step 7: Create data directory and push schema**
+
+```bash
+mkdir -p data
+npx drizzle-kit push
 ```
 
 - [ ] **Step 8: Create shared types**
@@ -252,13 +254,12 @@ export interface SourceResponse {
 }
 ```
 
-- [ ] **Step 9: Add prisma/dev.db to .gitignore**
+- [ ] **Step 9: Add data/ to .gitignore**
 
 Append to `.gitignore`:
 
 ```
-prisma/dev.db
-prisma/dev.db-journal
+data/
 ```
 
 - [ ] **Step 10: Verify app starts and Jest runs**
@@ -279,7 +280,7 @@ Expected: Both commands succeed without errors.
 
 ```bash
 git add -A
-git commit -m "feat: initialize Next.js project with Prisma + SQLite schema and Jest config"
+git commit -m "feat: initialize Next.js project with Drizzle ORM + SQLite schema and Jest config"
 ```
 
 ---
@@ -298,17 +299,15 @@ Create `__tests__/api/categories.test.ts`. Tests call route handler functions di
 ```typescript
 import { GET, POST } from "@/app/api/categories/route";
 import { PATCH, DELETE } from "@/app/api/categories/[id]/route";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { categories, sources, articles } from "@/lib/schema";
+import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 
 beforeEach(async () => {
-  await prisma.article.deleteMany();
-  await prisma.source.deleteMany();
-  await prisma.category.deleteMany();
-});
-
-afterAll(async () => {
-  await prisma.$disconnect();
+  db.delete(articles).run();
+  db.delete(sources).run();
+  db.delete(categories).run();
 });
 
 describe("GET /api/categories", () => {
@@ -320,8 +319,8 @@ describe("GET /api/categories", () => {
   });
 
   it("returns all categories sorted by name", async () => {
-    await prisma.category.create({ data: { name: "Claude Code", slug: "claude-code" } });
-    await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
+    db.insert(categories).values({ name: "Claude Code", slug: "claude-code" }).run();
+    db.insert(categories).values({ name: "AWS", slug: "aws" }).run();
     const res = await GET();
     const data = await res.json();
     expect(data).toHaveLength(2);
@@ -344,7 +343,7 @@ describe("POST /api/categories", () => {
   });
 
   it("returns 400 for duplicate slug", async () => {
-    await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
+    db.insert(categories).values({ name: "AWS", slug: "aws" }).run();
     const req = new NextRequest("http://localhost/api/categories", {
       method: "POST",
       body: JSON.stringify({ name: "AWS 2", slug: "aws" }),
@@ -357,7 +356,7 @@ describe("POST /api/categories", () => {
 
 describe("PATCH /api/categories/[id]", () => {
   it("updates category name", async () => {
-    const category = await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
+    const [category] = db.insert(categories).values({ name: "AWS", slug: "aws" }).returning();
     const req = new NextRequest(`http://localhost/api/categories/${category.id}`, {
       method: "PATCH",
       body: JSON.stringify({ name: "Amazon Web Services" }),
@@ -372,13 +371,13 @@ describe("PATCH /api/categories/[id]", () => {
 
 describe("DELETE /api/categories/[id]", () => {
   it("deletes a category and cascades", async () => {
-    const category = await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
+    const [category] = db.insert(categories).values({ name: "AWS", slug: "aws" }).returning();
     const req = new NextRequest(`http://localhost/api/categories/${category.id}`, {
       method: "DELETE",
     });
     const res = await DELETE(req, { params: Promise.resolve({ id: category.id }) });
     expect(res.status).toBe(204);
-    const count = await prisma.category.count();
+    const [{ count }] = db.select({ count: sql<number>`count(*)` }).from(categories).all();
     expect(count).toBe(0);
   });
 });
@@ -398,13 +397,13 @@ Create `src/app/api/categories/route.ts`:
 
 ```typescript
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { categories } from "@/lib/schema";
+import { eq, asc } from "drizzle-orm";
 
 export async function GET() {
-  const categories = await prisma.category.findMany({
-    orderBy: { name: "asc" },
-  });
-  return NextResponse.json(categories);
+  const result = db.select().from(categories).orderBy(asc(categories.name)).all();
+  return NextResponse.json(result);
 }
 
 export async function POST(request: Request) {
@@ -418,7 +417,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const existing = await prisma.category.findUnique({ where: { slug } });
+  const existing = db.select().from(categories).where(eq(categories.slug, slug)).get();
   if (existing) {
     return NextResponse.json(
       { error: "slug already exists" },
@@ -426,7 +425,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const category = await prisma.category.create({ data: { name, slug } });
+  const [category] = db.insert(categories).values({ name, slug }).returning();
   return NextResponse.json(category, { status: 201 });
 }
 ```
@@ -437,7 +436,9 @@ Create `src/app/api/categories/[id]/route.ts`:
 
 ```typescript
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { categories } from "@/lib/schema";
+import { eq } from "drizzle-orm";
 
 export async function PATCH(
   request: Request,
@@ -447,16 +448,16 @@ export async function PATCH(
   const body = await request.json();
   const { name, slug } = body;
 
-  const data: { name?: string; slug?: string } = {};
+  const data: { name?: string; slug?: string; updatedAt?: string } = {};
   if (name !== undefined) data.name = name;
   if (slug !== undefined) data.slug = slug;
+  data.updatedAt = new Date().toISOString();
 
-  try {
-    const category = await prisma.category.update({ where: { id }, data });
-    return NextResponse.json(category);
-  } catch {
+  const result = db.update(categories).set(data).where(eq(categories.id, id)).returning();
+  if (result.length === 0) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
+  return NextResponse.json(result[0]);
 }
 
 export async function DELETE(
@@ -464,12 +465,11 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  try {
-    await prisma.category.delete({ where: { id } });
-    return new NextResponse(null, { status: 204 });
-  } catch {
+  const result = db.delete(categories).where(eq(categories.id, id)).returning();
+  if (result.length === 0) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
+  return new NextResponse(null, { status: 204 });
 }
 ```
 
@@ -504,28 +504,23 @@ Create `__tests__/api/sources.test.ts`:
 ```typescript
 import { GET, POST } from "@/app/api/sources/route";
 import { PATCH, DELETE } from "@/app/api/sources/[id]/route";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { categories, sources, articles } from "@/lib/schema";
 import { NextRequest } from "next/server";
 
 let categoryId: string;
 
 beforeEach(async () => {
-  await prisma.article.deleteMany();
-  await prisma.source.deleteMany();
-  await prisma.category.deleteMany();
-  const category = await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
+  db.delete(articles).run();
+  db.delete(sources).run();
+  db.delete(categories).run();
+  const [category] = db.insert(categories).values({ name: "AWS", slug: "aws" }).returning();
   categoryId = category.id;
-});
-
-afterAll(async () => {
-  await prisma.$disconnect();
 });
 
 describe("GET /api/sources", () => {
   it("returns sources filtered by categoryId", async () => {
-    await prisma.source.create({
-      data: { categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" },
-    });
+    db.insert(sources).values({ categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" }).run();
     const req = new NextRequest(`http://localhost/api/sources?categoryId=${categoryId}`);
     const res = await GET(req);
     const data = await res.json();
@@ -556,9 +551,7 @@ describe("POST /api/sources", () => {
 
 describe("PATCH /api/sources/[id]", () => {
   it("toggles enabled flag", async () => {
-    const source = await prisma.source.create({
-      data: { categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" },
-    });
+    const [source] = db.insert(sources).values({ categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" }).returning();
     const req = new NextRequest(`http://localhost/api/sources/${source.id}`, {
       method: "PATCH",
       body: JSON.stringify({ enabled: false }),
@@ -573,9 +566,7 @@ describe("PATCH /api/sources/[id]", () => {
 
 describe("DELETE /api/sources/[id]", () => {
   it("deletes a source", async () => {
-    const source = await prisma.source.create({
-      data: { categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" },
-    });
+    const [source] = db.insert(sources).values({ categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" }).returning();
     const req = new NextRequest(`http://localhost/api/sources/${source.id}`, {
       method: "DELETE",
     });
@@ -599,16 +590,18 @@ Create `src/app/api/sources/route.ts`:
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { sources, categories } from "@/lib/schema";
+import { eq, asc } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
   const categoryId = request.nextUrl.searchParams.get("categoryId");
-  const sources = await prisma.source.findMany({
-    where: categoryId ? { categoryId } : undefined,
-    include: { category: true },
-    orderBy: { name: "asc" },
-  });
-  return NextResponse.json(sources);
+  let query = db.select().from(sources);
+  if (categoryId) {
+    query = query.where(eq(sources.categoryId, categoryId));
+  }
+  const result = query.orderBy(asc(sources.name)).all();
+  return NextResponse.json(result);
 }
 
 export async function POST(request: Request) {
@@ -622,7 +615,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const source = await prisma.source.create({ data: { categoryId, name, url } });
+  const [source] = db.insert(sources).values({ categoryId, name, url }).returning();
   return NextResponse.json(source, { status: 201 });
 }
 ```
@@ -633,7 +626,9 @@ Create `src/app/api/sources/[id]/route.ts`:
 
 ```typescript
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { sources } from "@/lib/schema";
+import { eq } from "drizzle-orm";
 
 export async function PATCH(
   request: Request,
@@ -643,17 +638,17 @@ export async function PATCH(
   const body = await request.json();
   const { name, url, enabled } = body;
 
-  const data: { name?: string; url?: string; enabled?: boolean } = {};
+  const data: { name?: string; url?: string; enabled?: boolean; updatedAt?: string } = {};
   if (name !== undefined) data.name = name;
   if (url !== undefined) data.url = url;
   if (enabled !== undefined) data.enabled = enabled;
+  data.updatedAt = new Date().toISOString();
 
-  try {
-    const source = await prisma.source.update({ where: { id }, data });
-    return NextResponse.json(source);
-  } catch {
+  const result = db.update(sources).set(data).where(eq(sources.id, id)).returning();
+  if (result.length === 0) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
+  return NextResponse.json(result[0]);
 }
 
 export async function DELETE(
@@ -661,12 +656,11 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  try {
-    await prisma.source.delete({ where: { id } });
-    return new NextResponse(null, { status: 204 });
-  } catch {
+  const result = db.delete(sources).where(eq(sources.id, id)).returning();
+  if (result.length === 0) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
+  return new NextResponse(null, { status: 204 });
 }
 ```
 
@@ -701,36 +695,29 @@ Create `__tests__/api/articles.test.ts`:
 ```typescript
 import { GET } from "@/app/api/articles/route";
 import { PATCH } from "@/app/api/articles/[id]/read/route";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { categories, sources, articles } from "@/lib/schema";
 import { NextRequest } from "next/server";
 
 let sourceId: string;
 let categoryId: string;
 
 beforeEach(async () => {
-  await prisma.article.deleteMany();
-  await prisma.source.deleteMany();
-  await prisma.category.deleteMany();
-  const category = await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
+  db.delete(articles).run();
+  db.delete(sources).run();
+  db.delete(categories).run();
+  const [category] = db.insert(categories).values({ name: "AWS", slug: "aws" }).returning();
   categoryId = category.id;
-  const source = await prisma.source.create({
-    data: { categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" },
-  });
+  const [source] = db.insert(sources).values({ categoryId, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" }).returning();
   sourceId = source.id;
-});
-
-afterAll(async () => {
-  await prisma.$disconnect();
 });
 
 describe("GET /api/articles", () => {
   it("returns articles sorted by importance descending", async () => {
-    await prisma.article.createMany({
-      data: [
-        { sourceId, externalId: "url-1", content: "c1", url: "https://example.com/1", importance: 3, publishedAt: new Date() },
-        { sourceId, externalId: "url-2", content: "c2", url: "https://example.com/2", importance: 5, publishedAt: new Date() },
-      ],
-    });
+    db.insert(articles).values([
+      { sourceId, externalId: "url-1", content: "c1", url: "https://example.com/1", importance: 3, publishedAt: new Date().toISOString() },
+      { sourceId, externalId: "url-2", content: "c2", url: "https://example.com/2", importance: 5, publishedAt: new Date().toISOString() },
+    ]).run();
     const req = new NextRequest("http://localhost/api/articles");
     const res = await GET(req);
     const data = await res.json();
@@ -741,9 +728,7 @@ describe("GET /api/articles", () => {
   });
 
   it("filters by categoryId", async () => {
-    await prisma.article.create({
-      data: { sourceId, externalId: "url-1", content: "c", url: "https://example.com/1", importance: 3, publishedAt: new Date() },
-    });
+    db.insert(articles).values({ sourceId, externalId: "url-1", content: "c", url: "https://example.com/1", importance: 3, publishedAt: new Date().toISOString() }).run();
     const req = new NextRequest(`http://localhost/api/articles?categoryId=${categoryId}`);
     const res = await GET(req);
     const data = await res.json();
@@ -751,9 +736,7 @@ describe("GET /api/articles", () => {
   });
 
   it("filters by read status", async () => {
-    await prisma.article.create({
-      data: { sourceId, externalId: "url-1", content: "c", url: "https://example.com/1", importance: 3, publishedAt: new Date(), readAt: new Date() },
-    });
+    db.insert(articles).values({ sourceId, externalId: "url-1", content: "c", url: "https://example.com/1", importance: 3, publishedAt: new Date().toISOString(), readAt: new Date().toISOString() }).run();
     const req = new NextRequest("http://localhost/api/articles?read=false");
     const res = await GET(req);
     const data = await res.json();
@@ -762,9 +745,7 @@ describe("GET /api/articles", () => {
 
   it("supports pagination", async () => {
     for (let i = 0; i < 3; i++) {
-      await prisma.article.create({
-        data: { sourceId, externalId: `url-${i}`, content: `c-${i}`, url: `https://example.com/${i}`, importance: i, publishedAt: new Date() },
-      });
+      db.insert(articles).values({ sourceId, externalId: `url-${i}`, content: `c-${i}`, url: `https://example.com/${i}`, importance: i, publishedAt: new Date().toISOString() }).run();
     }
     const req = new NextRequest("http://localhost/api/articles?limit=2&offset=0");
     const res = await GET(req);
@@ -776,9 +757,7 @@ describe("GET /api/articles", () => {
 
 describe("PATCH /api/articles/[id]/read", () => {
   it("marks article as read", async () => {
-    const article = await prisma.article.create({
-      data: { sourceId, externalId: "url-1", content: "c", url: "https://example.com/1", importance: 3, publishedAt: new Date() },
-    });
+    const [article] = db.insert(articles).values({ sourceId, externalId: "url-1", content: "c", url: "https://example.com/1", importance: 3, publishedAt: new Date().toISOString() }).returning();
     const req = new NextRequest(`http://localhost/api/articles/${article.id}/read`, { method: "PATCH" });
     const res = await PATCH(req, { params: Promise.resolve({ id: article.id }) });
     const data = await res.json();
@@ -802,7 +781,9 @@ Create `src/app/api/articles/route.ts`:
 
 ```typescript
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { articles, sources, categories } from "@/lib/schema";
+import { eq, desc, isNull, isNotNull, sql, and } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -812,48 +793,57 @@ export async function GET(request: NextRequest) {
   const limit = parseInt(searchParams.get("limit") || "50", 10);
   const offset = parseInt(searchParams.get("offset") || "0", 10);
 
-  const where: Record<string, unknown> = {};
+  const conditions = [];
 
   if (categoryId) {
-    where.source = { categoryId };
+    conditions.push(eq(sources.categoryId, categoryId));
   }
 
   if (read === "true") {
-    where.readAt = { not: null };
+    conditions.push(isNotNull(articles.readAt));
   } else if (read === "false") {
-    where.readAt = null;
+    conditions.push(isNull(articles.readAt));
   }
 
-  const orderByMap: Record<string, Record<string, "desc">> = {
-    publishedAt: { publishedAt: "desc" },
-    collectedAt: { collectedAt: "desc" },
-    importance: { importance: "desc" },
+  const orderByMap = {
+    publishedAt: desc(articles.publishedAt),
+    collectedAt: desc(articles.collectedAt),
+    importance: desc(articles.importance),
   };
-  const orderBy = orderByMap[sortBy] || orderByMap.importance;
+  const orderByClause = orderByMap[sortBy as keyof typeof orderByMap] || orderByMap.importance;
 
-  const [articles, total] = await Promise.all([
-    prisma.article.findMany({
-      where,
-      orderBy,
-      take: limit,
-      skip: offset,
-      include: { source: { include: { category: true } } },
-    }),
-    prisma.article.count({ where }),
-  ]);
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const formatted = articles.map((a) => ({
-    id: a.id,
-    title: a.title,
-    content: a.content,
-    url: a.url,
-    summary: a.summary,
-    importance: a.importance,
-    publishedAt: a.publishedAt,
-    collectedAt: a.collectedAt,
-    readAt: a.readAt,
-    source: { id: a.source.id, name: a.source.name },
-    category: { id: a.source.category.id, name: a.source.category.name, slug: a.source.category.slug },
+  const rows = db
+    .select()
+    .from(articles)
+    .innerJoin(sources, eq(articles.sourceId, sources.id))
+    .innerJoin(categories, eq(sources.categoryId, categories.id))
+    .where(whereClause)
+    .orderBy(orderByClause)
+    .limit(limit)
+    .offset(offset)
+    .all();
+
+  const [{ count: total }] = db
+    .select({ count: sql<number>`count(*)` })
+    .from(articles)
+    .innerJoin(sources, eq(articles.sourceId, sources.id))
+    .where(whereClause)
+    .all();
+
+  const formatted = rows.map((r) => ({
+    id: r.articles.id,
+    title: r.articles.title,
+    content: r.articles.content,
+    url: r.articles.url,
+    summary: r.articles.summary,
+    importance: r.articles.importance,
+    publishedAt: r.articles.publishedAt,
+    collectedAt: r.articles.collectedAt,
+    readAt: r.articles.readAt,
+    source: { id: r.sources.id, name: r.sources.name },
+    category: { id: r.categories.id, name: r.categories.name, slug: r.categories.slug },
   }));
 
   return NextResponse.json({ articles: formatted, total });
@@ -866,17 +856,16 @@ Create `src/app/api/articles/[id]/read/route.ts`:
 
 ```typescript
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { articles } from "@/lib/schema";
+import { eq } from "drizzle-orm";
 
 export async function PATCH(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const article = await prisma.article.update({
-    where: { id },
-    data: { readAt: new Date() },
-  });
+  const [article] = db.update(articles).set({ readAt: new Date().toISOString() }).where(eq(articles.id, id)).returning();
   return NextResponse.json(article);
 }
 ```
@@ -1199,7 +1188,8 @@ Create `__tests__/api/collect.test.ts`:
 
 ```typescript
 import { POST } from "@/app/api/collect/route";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { categories, sources, articles } from "@/lib/schema";
 import { collectFromSource } from "@/lib/collector";
 import { summarizeArticles } from "@/lib/summarizer";
 
@@ -1210,9 +1200,9 @@ const mockCollect = collectFromSource as jest.MockedFunction<typeof collectFromS
 const mockSummarize = summarizeArticles as jest.MockedFunction<typeof summarizeArticles>;
 
 beforeEach(async () => {
-  await prisma.article.deleteMany();
-  await prisma.source.deleteMany();
-  await prisma.category.deleteMany();
+  db.delete(articles).run();
+  db.delete(sources).run();
+  db.delete(categories).run();
 
   mockCollect.mockResolvedValue([
     {
@@ -1229,16 +1219,10 @@ beforeEach(async () => {
   ]);
 });
 
-afterAll(async () => {
-  await prisma.$disconnect();
-});
-
 describe("POST /api/collect", () => {
   it("collects articles and saves with summaries", async () => {
-    const category = await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
-    await prisma.source.create({
-      data: { categoryId: category.id, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" },
-    });
+    const [category] = db.insert(categories).values({ name: "AWS", slug: "aws" }).returning();
+    db.insert(sources).values({ categoryId: category.id, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" }).run();
 
     const res = await POST();
     const data = await res.json();
@@ -1247,27 +1231,23 @@ describe("POST /api/collect", () => {
     expect(data.collected).toBe(1);
     expect(data.summarized).toBe(1);
 
-    const articles = await prisma.article.findMany();
-    expect(articles).toHaveLength(1);
-    expect(articles[0].summary).toBe("テスト要約");
-    expect(articles[0].importance).toBe(4);
+    const allArticles = db.select().from(articles).all();
+    expect(allArticles).toHaveLength(1);
+    expect(allArticles[0].summary).toBe("テスト要約");
+    expect(allArticles[0].importance).toBe(4);
   });
 
   it("skips duplicate articles", async () => {
-    const category = await prisma.category.create({ data: { name: "AWS", slug: "aws" } });
-    const source = await prisma.source.create({
-      data: { categoryId: category.id, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" },
-    });
-    await prisma.article.create({
-      data: {
-        sourceId: source.id,
-        externalId: "https://example.com/1",
-        content: "Old content",
-        url: "https://example.com/1",
-        importance: 0,
-        publishedAt: new Date(),
-      },
-    });
+    const [category] = db.insert(categories).values({ name: "AWS", slug: "aws" }).returning();
+    const [source] = db.insert(sources).values({ categoryId: category.id, name: "AWS Blog", url: "https://aws.amazon.com/blogs/aws/feed/" }).returning();
+    db.insert(articles).values({
+      sourceId: source.id,
+      externalId: "https://example.com/1",
+      content: "Old content",
+      url: "https://example.com/1",
+      importance: 0,
+      publishedAt: new Date().toISOString(),
+    }).run();
 
     const res = await POST();
     const data = await res.json();
@@ -1292,7 +1272,9 @@ Create `src/app/api/collect/route.ts`:
 
 ```typescript
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
+import { articles, sources, categories } from "@/lib/schema";
+import { eq, isNull, lt, and } from "drizzle-orm";
 import { collectFromSource } from "@/lib/collector";
 import { summarizeArticles } from "@/lib/summarizer";
 
@@ -1300,73 +1282,74 @@ const BATCH_SIZE = 10;
 const RETENTION_DAYS = 90;
 
 export async function POST() {
-  const sources = await prisma.source.findMany({
-    where: { enabled: true },
-    include: { category: true },
-  });
+  const enabledSources = db
+    .select()
+    .from(sources)
+    .innerJoin(categories, eq(sources.categoryId, categories.id))
+    .where(eq(sources.enabled, true))
+    .all();
 
   let totalCollected = 0;
   let totalSummarized = 0;
   const errors: string[] = [];
 
   // Collect articles from each source
-  for (const source of sources) {
+  for (const row of enabledSources) {
     try {
-      const items = await collectFromSource(source.url);
+      const items = await collectFromSource(row.sources.url);
       for (const item of items) {
-        const existing = await prisma.article.findUnique({
-          where: { externalId: item.externalId },
-        });
+        const existing = db.select().from(articles).where(eq(articles.externalId, item.externalId)).get();
         if (existing) continue;
 
-        await prisma.article.create({
-          data: {
-            sourceId: source.id,
-            externalId: item.externalId,
-            title: item.title,
-            content: item.content,
-            url: item.url,
-            publishedAt: item.publishedAt,
-          },
-        });
+        db.insert(articles).values({
+          sourceId: row.sources.id,
+          externalId: item.externalId,
+          title: item.title,
+          content: item.content,
+          url: item.url,
+          publishedAt: item.publishedAt.toISOString(),
+        }).run();
         totalCollected++;
       }
     } catch (error) {
-      const msg = `Failed to collect from ${source.name}: ${error}`;
+      const msg = `Failed to collect from ${row.sources.name}: ${error}`;
       console.error(msg);
       errors.push(msg);
     }
   }
 
   // Summarize unsummarized articles (new + previously failed)
-  const unsummarized = await prisma.article.findMany({
-    where: { summary: null },
-    include: { source: { include: { category: true } } },
-  });
+  const unsummarized = db
+    .select()
+    .from(articles)
+    .innerJoin(sources, eq(articles.sourceId, sources.id))
+    .innerJoin(categories, eq(sources.categoryId, categories.id))
+    .where(isNull(articles.summary))
+    .all();
 
   const byCategory = new Map<string, typeof unsummarized>();
-  for (const article of unsummarized) {
-    const catId = article.source.category.id;
+  for (const row of unsummarized) {
+    const catId = row.categories.id;
     if (!byCategory.has(catId)) byCategory.set(catId, []);
-    byCategory.get(catId)!.push(article);
+    byCategory.get(catId)!.push(row);
   }
 
-  for (const [, articles] of byCategory) {
-    for (let i = 0; i < articles.length; i += BATCH_SIZE) {
-      const batch = articles.slice(i, i + BATCH_SIZE);
+  for (const [, articleRows] of byCategory) {
+    for (let i = 0; i < articleRows.length; i += BATCH_SIZE) {
+      const batch = articleRows.slice(i, i + BATCH_SIZE);
       try {
         const summaries = await summarizeArticles(
-          batch.map((a) => ({
-            externalId: a.externalId,
-            title: a.title ?? undefined,
-            content: a.content,
+          batch.map((r) => ({
+            externalId: r.articles.externalId,
+            title: r.articles.title ?? undefined,
+            content: r.articles.content,
           }))
         );
         for (const summary of summaries) {
-          await prisma.article.update({
-            where: { externalId: summary.externalId },
-            data: { summary: summary.summary, importance: summary.importance },
-          });
+          db.update(articles)
+            .set({ summary: summary.summary, importance: summary.importance })
+            .where(eq(articles.externalId, summary.externalId))
+            .run();
           totalSummarized++;
         }
       } catch (error) {
@@ -1379,14 +1362,12 @@ export async function POST() {
   // Cleanup old articles
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
-  const deleted = await prisma.article.deleteMany({
-    where: { collectedAt: { lt: cutoff } },
-  });
+  const deleted = db.delete(articles).where(lt(articles.collectedAt, cutoff.toISOString())).returning();
 
   return NextResponse.json({
     collected: totalCollected,
     summarized: totalSummarized,
-    deleted: deleted.count,
+    deleted: deleted.length,
     errors,
   });
 }
@@ -1958,83 +1939,78 @@ git commit -m "feat: add settings page with category and source management"
 ## Task 10: Seed Data & End-to-End Verification
 
 **Files:**
-- Create: `prisma/seed.ts`
-- Modify: `package.json` (add prisma seed config)
+- Create: `src/lib/seed.ts`
+- Modify: `package.json` (add seed script)
 
 - [ ] **Step 1: Create seed script**
 
-Create `prisma/seed.ts`:
+Create `src/lib/seed.ts`:
 
 ```typescript
-import { PrismaClient } from "@prisma/client";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { eq, and } from "drizzle-orm";
+import * as schema from "./schema";
+import { categories, sources } from "./schema";
+import path from "path";
 
-const prisma = new PrismaClient();
+const dbPath = path.join(process.cwd(), "data", "morningbrief.db");
+const sqlite = new Database(dbPath);
+sqlite.pragma("journal_mode = WAL");
+const db = drizzle(sqlite, { schema });
 
-async function main() {
-  const aws = await prisma.category.upsert({
-    where: { slug: "aws" },
-    update: {},
-    create: { name: "AWS", slug: "aws" },
-  });
+function main() {
+  // Upsert categories
+  let aws = db.select().from(categories).where(eq(categories.slug, "aws")).get();
+  if (!aws) {
+    [aws] = db.insert(categories).values({ name: "AWS", slug: "aws" }).returning();
+  }
 
-  const claude = await prisma.category.upsert({
-    where: { slug: "claude-code" },
-    update: {},
-    create: { name: "Claude Code", slug: "claude-code" },
-  });
+  let claude = db.select().from(categories).where(eq(categories.slug, "claude-code")).get();
+  if (!claude) {
+    [claude] = db.insert(categories).values({ name: "Claude Code", slug: "claude-code" }).returning();
+  }
 
-  // Use upsert on externalId-like keys via findFirst + create pattern
-  const awsBlogExists = await prisma.source.findFirst({
-    where: { categoryId: aws.id, url: "https://aws.amazon.com/blogs/aws/feed/" },
-  });
+  // Upsert sources
+  const awsBlogExists = db.select().from(sources).where(
+    and(eq(sources.categoryId, aws.id), eq(sources.url, "https://aws.amazon.com/blogs/aws/feed/"))
+  ).get();
   if (!awsBlogExists) {
-    await prisma.source.create({
-      data: { categoryId: aws.id, name: "AWS公式ブログ", url: "https://aws.amazon.com/blogs/aws/feed/" },
-    });
+    db.insert(sources).values({ categoryId: aws.id, name: "AWS公式ブログ", url: "https://aws.amazon.com/blogs/aws/feed/" }).run();
   }
 
-  const awsWhatsNewExists = await prisma.source.findFirst({
-    where: { categoryId: aws.id, url: "https://aws.amazon.com/about-aws/whats-new/recent/feed/" },
-  });
+  const awsWhatsNewExists = db.select().from(sources).where(
+    and(eq(sources.categoryId, aws.id), eq(sources.url, "https://aws.amazon.com/about-aws/whats-new/recent/feed/"))
+  ).get();
   if (!awsWhatsNewExists) {
-    await prisma.source.create({
-      data: { categoryId: aws.id, name: "AWS What's New", url: "https://aws.amazon.com/about-aws/whats-new/recent/feed/" },
-    });
+    db.insert(sources).values({ categoryId: aws.id, name: "AWS What's New", url: "https://aws.amazon.com/about-aws/whats-new/recent/feed/" }).run();
   }
 
-  const anthropicExists = await prisma.source.findFirst({
-    where: { categoryId: claude.id, url: "https://www.anthropic.com/feed.xml" },
-  });
+  const anthropicExists = db.select().from(sources).where(
+    and(eq(sources.categoryId, claude.id), eq(sources.url, "https://www.anthropic.com/feed.xml"))
+  ).get();
   if (!anthropicExists) {
-    await prisma.source.create({
-      data: { categoryId: claude.id, name: "Anthropicブログ", url: "https://www.anthropic.com/feed.xml" },
-    });
+    db.insert(sources).values({ categoryId: claude.id, name: "Anthropicブログ", url: "https://www.anthropic.com/feed.xml" }).run();
   }
 
   console.log("Seed data created successfully");
 }
 
-main()
-  .catch((e) => { console.error(e); process.exit(1); })
-  .finally(async () => { await prisma.$disconnect(); });
+main();
 ```
 
-- [ ] **Step 2: Add seed config to package.json**
+- [ ] **Step 2: Add seed script to package.json**
 
-Add to `package.json`:
+Add to `package.json` scripts:
 
 ```json
-{
-  "prisma": {
-    "seed": "npx tsx prisma/seed.ts"
-  }
-}
+"seed": "npx tsx src/lib/seed.ts"
 ```
 
 - [ ] **Step 3: Run seed**
 
 ```bash
-npx prisma db seed
+npm run seed
 ```
 
 Expected: "Seed data created successfully"
@@ -2073,6 +2049,6 @@ Verify app works at http://localhost:3000.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add prisma/seed.ts package.json
+git add src/lib/seed.ts package.json
 git commit -m "feat: add seed data and complete end-to-end verification"
 ```
