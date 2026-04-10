@@ -46,14 +46,21 @@ async function main() {
     }).run();
   }
 
-  const anthropicExists = db.select().from(schema.sources)
-    .where(eq(schema.sources.url, "https://www.anthropic.com/feed.xml")).get();
-  if (!anthropicExists) {
+  const claudeCodeReleasesExists = db.select().from(schema.sources)
+    .where(eq(schema.sources.url, "https://github.com/anthropics/claude-code/releases.atom")).get();
+  if (!claudeCodeReleasesExists) {
     db.insert(schema.sources).values({
       categoryId: claude.id,
-      name: "Anthropicブログ",
-      url: "https://www.anthropic.com/feed.xml",
+      name: "Claude Code Releases",
+      url: "https://github.com/anthropics/claude-code/releases.atom",
     }).run();
+  }
+
+  // Clean up old invalid feed URL
+  const oldAnthropicFeed = db.select().from(schema.sources)
+    .where(eq(schema.sources.url, "https://www.anthropic.com/feed.xml")).get();
+  if (oldAnthropicFeed) {
+    db.delete(schema.sources).where(eq(schema.sources.url, "https://www.anthropic.com/feed.xml")).run();
   }
 
   console.log("Seed data created successfully");

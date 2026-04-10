@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(npx create-next-app@latest:*)",
+      "Bash(npm test:*)",
+      "Bash(timeout 15 npm run dev)",
+      "Bash(git commit:*)",
+      "Bash(npx jest:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx next:*)",
+      "Bash(npx tsc:*)",
+      "Bash(git reset:*)",
+      "Bash(cp /tmp/morningbrief-temp/.gitignore .)",
+      "Bash(cp /tmp/morningbrief-temp/package.json .)",
+      "Bash(cp /tmp/morningbrief-temp/package-lock.json .)",
+      "Bash(cp /tmp/morningbrief-temp/tsconfig.json .)",
+      "Bash(cp /tmp/morningbrief-temp/next.config.ts .)",
+      "Bash(npm install:*)",
+      "Bash(npx drizzle-kit:*)",
+      "Bash(node -e ':*)",
+      "Bash(node:*)",
+      "Bash(npm run:*)",
+      "Bash(git log:*)"
+    ]
+  }
+}
