@@ -3,6 +3,29 @@
 import { useState } from "react";
 import { CategoryResponse, SourceResponse } from "@/types";
 
+const inputStyle: React.CSSProperties = {
+  border: "1px solid var(--color-border)",
+  borderRadius: "var(--radius-md)",
+  padding: "var(--space-sm) var(--space-md)",
+  fontSize: "var(--text-sm)",
+  color: "var(--color-text-primary)",
+  background: "var(--color-surface-primary)",
+  outline: "none",
+  transition: `border-color var(--duration-fast) var(--ease-out)`,
+};
+
+const btnPrimary: React.CSSProperties = {
+  background: "var(--color-text-primary)",
+  color: "var(--color-text-inverse)",
+  padding: "var(--space-sm) var(--space-lg)",
+  borderRadius: "var(--radius-md)",
+  fontSize: "var(--text-sm)",
+  fontWeight: 500,
+  border: "none",
+  cursor: "pointer",
+  transition: `opacity var(--duration-fast) var(--ease-out)`,
+};
+
 export default function SourceForm({
   categories,
   sources,
@@ -52,35 +75,134 @@ export default function SourceForm({
 
   return (
     <div>
-      <h2 className="text-lg font-bold mb-3">ソース（RSSフィード）</h2>
-      <form onSubmit={handleAdd} className="flex gap-2 mb-4 flex-wrap">
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="border rounded px-3 py-1.5 text-sm">
+      <h2
+        style={{
+          fontSize: "var(--text-base)",
+          fontWeight: 700,
+          color: "var(--color-text-primary)",
+          marginBottom: "var(--space-lg)",
+        }}
+      >
+        ソース（RSSフィード）
+      </h2>
+      <form
+        onSubmit={handleAdd}
+        className="flex gap-2 flex-wrap"
+        style={{ marginBottom: "var(--space-xl)" }}
+      >
+        <select
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          style={inputStyle}
+        >
           <option value="">カテゴリ選択</option>
           {categories.map((cat) => (
             <option key={cat.id} value={cat.id}>{cat.name}</option>
           ))}
         </select>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="ソース名" className="border rounded px-3 py-1.5 text-sm" />
-        <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="RSSフィードURL" className="border rounded px-3 py-1.5 text-sm flex-1" />
-        <button type="submit" className="bg-blue-500 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-600">追加</button>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="ソース名"
+          style={inputStyle}
+        />
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="RSSフィードURL"
+          style={{ ...inputStyle, flex: 1 }}
+        />
+        <button type="submit" style={btnPrimary} className="hover:opacity-80">
+          追加
+        </button>
       </form>
       {categories.map((cat) => {
         const catSources = sourcesByCategory.get(cat.id) || [];
         if (catSources.length === 0) return null;
         return (
-          <div key={cat.id} className="mb-4">
-            <h3 className="text-sm font-medium text-gray-500 mb-2">{cat.name}</h3>
-            <ul className="space-y-1">
+          <div key={cat.id} style={{ marginBottom: "var(--space-xl)" }}>
+            <h3
+              style={{
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                color: "var(--color-text-tertiary)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginBottom: "var(--space-sm)",
+              }}
+            >
+              {cat.name}
+            </h3>
+            <ul style={{ display: "flex", flexDirection: "column", gap: "var(--space-xs)" }}>
               {catSources.map((source) => (
-                <li key={source.id} className="flex items-center justify-between border rounded p-2">
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => handleToggle(source)} className={`w-8 h-5 rounded-full transition-colors ${source.enabled ? "bg-green-500" : "bg-gray-300"}`}>
-                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform ${source.enabled ? "translate-x-3.5" : "translate-x-0.5"}`} />
+                <li
+                  key={source.id}
+                  className="flex items-center justify-between"
+                  style={{
+                    border: "1px solid var(--color-border-subtle)",
+                    borderRadius: "var(--radius-md)",
+                    padding: "var(--space-sm) var(--space-md)",
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => handleToggle(source)}
+                      style={{
+                        width: "2rem",
+                        height: "1.25rem",
+                        borderRadius: "var(--radius-full)",
+                        background: source.enabled ? "var(--color-importance-2)" : "var(--color-border)",
+                        border: "none",
+                        cursor: "pointer",
+                        position: "relative",
+                        transition: `background var(--duration-fast) var(--ease-out)`,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: "2px",
+                          left: source.enabled ? "calc(100% - 1rem - 2px)" : "2px",
+                          width: "1rem",
+                          height: "1rem",
+                          borderRadius: "var(--radius-full)",
+                          background: "white",
+                          boxShadow: "var(--shadow-sm)",
+                          transition: `left var(--duration-fast) var(--ease-out)`,
+                        }}
+                      />
                     </button>
-                    <span className="text-sm">{source.name}</span>
-                    <span className="text-xs text-gray-400 truncate max-w-xs">{source.url}</span>
+                    <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-primary)" }}>
+                      {source.name}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "var(--text-xs)",
+                        color: "var(--color-text-tertiary)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        maxWidth: "16rem",
+                      }}
+                    >
+                      {source.url}
+                    </span>
                   </div>
-                  <button onClick={() => handleDelete(source.id)} className="text-red-500 text-sm">削除</button>
+                  <button
+                    onClick={() => handleDelete(source.id)}
+                    style={{
+                      fontSize: "var(--text-sm)",
+                      color: "var(--color-importance-5)",
+                      cursor: "pointer",
+                      background: "none",
+                      border: "none",
+                    }}
+                  >
+                    削除
+                  </button>
                 </li>
               ))}
             </ul>

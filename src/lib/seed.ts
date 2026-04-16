@@ -56,6 +56,65 @@ async function main() {
     }).run();
   }
 
+  // SRE category
+  let sre = db.select().from(schema.categories).where(eq(schema.categories.slug, "sre")).get();
+  if (!sre) {
+    [sre] = db.insert(schema.categories).values({ name: "SRE", slug: "sre" }).returning().all();
+  }
+
+  const sreSources = [
+    { name: "Julia Evans", url: "https://jvns.ca/atom.xml" },
+    { name: "Will Larson (Irrational Exuberance)", url: "https://lethain.com/feeds/" },
+    { name: "Lorin Hochstein (Surfing Complexity)", url: "https://surfingcomplexity.blog/feed/" },
+    { name: "Charity Majors", url: "https://charitydotwtf.substack.com/feed" },
+    { name: "SRE Weekly", url: "https://sreweekly.com/feed/" },
+    { name: "Fred Hebert", url: "https://ferd.ca/feed.rss" },
+    { name: "Brendan Gregg", url: "https://www.brendangregg.com/blog/rss.xml" },
+    { name: "Niall Murphy (RelyAbility)", url: "https://blog.relyabilit.ie/feed/" },
+  ];
+
+  for (const source of sreSources) {
+    const exists = db.select().from(schema.sources)
+      .where(eq(schema.sources.url, source.url)).get();
+    if (!exists) {
+      db.insert(schema.sources).values({
+        categoryId: sre.id,
+        name: source.name,
+        url: source.url,
+      }).run();
+    }
+  }
+
+  // Security / Vulnerability category
+  let security = db.select().from(schema.categories).where(eq(schema.categories.slug, "security")).get();
+  if (!security) {
+    [security] = db.insert(schema.categories).values({ name: "セキュリティ", slug: "security" }).returning().all();
+  }
+
+  const securitySources = [
+    { name: "CISA Cybersecurity Advisories", url: "https://www.cisa.gov/cybersecurity-advisories/all.xml" },
+    { name: "JPCERT/CC 注意喚起", url: "https://www.jpcert.or.jp/rss/jpcert.rdf" },
+    { name: "JVN 脆弱性対策情報", url: "https://jvn.jp/rss/jvn.rdf" },
+    { name: "The Hacker News", url: "https://feeds.feedburner.com/TheHackersNews" },
+    { name: "BleepingComputer", url: "https://www.bleepingcomputer.com/feed/" },
+    { name: "Krebs on Security", url: "https://krebsonsecurity.com/feed/" },
+    { name: "piyolog", url: "https://piyolog.hatenadiary.jp/rss" },
+    { name: "tl;dr sec", url: "https://tldrsec.com/feed.xml" },
+    { name: "Google Project Zero", url: "https://googleprojectzero.blogspot.com/feeds/posts/default" },
+  ];
+
+  for (const source of securitySources) {
+    const exists = db.select().from(schema.sources)
+      .where(eq(schema.sources.url, source.url)).get();
+    if (!exists) {
+      db.insert(schema.sources).values({
+        categoryId: security.id,
+        name: source.name,
+        url: source.url,
+      }).run();
+    }
+  }
+
   // Clean up old invalid feed URL
   const oldAnthropicFeed = db.select().from(schema.sources)
     .where(eq(schema.sources.url, "https://www.anthropic.com/feed.xml")).get();
